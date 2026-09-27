@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ホークス送迎費用計算</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:20px 14px 40px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f5f6f8;color:#222}.wrap{max-width:680px;margin:auto}h1{font-size:24px;margin:4px 0 18px}.card{background:#fff;border-radius:14px;padding:18px;margin-bottom:14px;box-shadow:0 2px 10px rgba(0,0,0,.06)}.label{font-weight:700;margin-bottom:7px}.start{padding:11px 12px;background:#f0f2f5;border-radius:9px;margin-bottom:16px}input{width:100%;padding:13px 12px;font-size:16px;border:1px solid #bbb;border-radius:9px;outline:none}button{width:100%;margin-top:10px;padding:13px;border:0;border-radius:9px;font-size:16px;font-weight:700;cursor:pointer}.search-btn{background:#222;color:#fff}.candidate{text-align:left;background:#fff;border:1px solid #ddd;margin-top:9px;padding:13px}.candidate .name{font-weight:700;font-size:16px}.candidate .addr{color:#666;font-size:13px;margin-top:4px;line-height:1.45}.result{text-align:center;padding:8px 0 2px}.distance{font-size:34px;font-weight:800;margin:6px 0}.fee{font-size:28px;font-weight:800;margin:4px 0 12px}.small{color:#666;font-size:13px;line-height:1.5}.maps{display:block;text-decoration:none;background:#4285f4;color:#fff;padding:13px;border-radius:9px;font-weight:700;margin-top:10px}.hidden{display:none}.error{color:#b00020;white-space:pre-line;line-height:1.5}.hint{margin-top:8px;color:#666;font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>🚗 ホークス送迎費用計算</h1>
+<div class="card">
+<div class="label">出発地</div>
+<div class="start">石狩市立花川南小学校</div>
+<div class="label">目的地</div>
+<input id="query" placeholder="例：和光小学校、北大、札幌ドーム">
+<button class="search-btn" onclick="searchPlaces()">目的地を検索</button>
+<div class="hint">学校名などは市名を付けなくても検索できます。</div>
+</div>
+<div id="candidateCard" class="card hidden"><div class="label">候補を選択してください</div><div id="candidates"></div></div>
+<div id="resultCard" class="card hidden"><div class="result"><div id="selectedName" class="label"></div><div id="distance" class="distance"></div><div id="fee" class="fee"></div><div class="small">片道の道路距離を基準に、往復料金として計算</div>
+<div class="small" style="margin-top:16px;padding:12px;text-align:left;background:#f5f6f8;border-radius:8px;">
+<strong>注記</strong><br>
+片道距離が50kmを超える場合は高速道路を利用可能とする。その場合は、高速道路利用料金の実費を乗車団員数で割り、送迎費に加えて支払いを受けることとする。
+</div>
+<a id="mapsLink" class="maps" target="_blank" rel="noopener">Googleマップでルートを確認</a></div></div>
+<div id="status" class="card hidden"></div>
+</div>
+<script>
+const START={lat:43.1422617,lon:141.2956496};
+const START_NAME="石狩市立花川南小学校";
+function setStatus(text,isError=false){const e=document.getElementById("status");e.className="card "+(isError?"error":"");e.classList.remove("hidden");e.textContent=text}
+function clearStatus(){document.getElementById("status").classList.add("hidden")}
+function escapeHtml(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]))}
+async function nominatimSearch(q){
+ const url="https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&namedetails=1&limit=20&countrycodes=jp&accept-language=ja&q="+encodeURIComponent(q);
+ const r=await fetch(url); if(!r.ok)throw new Error("検索サービスへの接続に失敗しました。"); return await r.json();
+}
+function keyOf(p){return (p.osm_type||"")+"/"+(p.osm_id||"")}
+function scorePlace(p,q){
+ const text=(p.display_name||"").toLowerCase(),name=(p.name||"").toLowerCase(),qq=q.toLowerCase().trim();
+ let s=0;
+ if((p.address?.state||"").includes("北海道")||text.includes("北海道"))s+=40;
+ if(text.includes("札幌市"))s+=100;
+ if(text.includes("石狩市"))s+=90;
+ if(name===qq)s+=100; else if(name.includes(qq))s+=45;
+ if(text.includes(qq))s+=25;
+ if(p.type==="school")s+=30;
+ if(p.class==="amenity")s+=10;
+ return s;
+}
+function displayName(p){return p.name||(p.display_name||"").split(",")[0]}
+async function searchPlaces(){
+ const q=document.getElementById("query").value.trim();
+ if(!q){setStatus("目的地を入力してください。",true);return}
+ clearStatus();document.getElementById("candidateCard").classList.add("hidden");document.getElementById("resultCard").classList.add("hidden");setStatus("候補を検索しています…");
+ try{
+  const variants=[...new Set([q,q+" 札幌市",q+" 北海道",q+" 石狩市"])];
+  const all=[];for(const v of variants)all.push(...await nominatimSearch(v));
+  const map=new Map();for(const p of all){const k=keyOf(p);if(!map.has(k))map.set(k,p)}
+  let places=[...map.values()];
+  const h=places.filter(p=>(p.address?.state||"").includes("北海道")||(p.display_name||"").includes("北海道"));
+  if(h.length)places=h;
+  places.sort((a,b)=>scorePlace(b,q)-scorePlace(a,q));
+  const seen=new Set();places=places.filter(p=>{const k=displayName(p)+"|"+(p.display_name||"");if(seen.has(k))return false;seen.add(k);return true}).slice(0,12);
+  clearStatus();
+  if(!places.length){setStatus("「"+q+"」に一致する候補が見つかりませんでした。\n「札幌市 "+q+"」など、少し具体的に入力して再検索してください。",true);return}
+  const c=document.getElementById("candidates");c.innerHTML="";
+  places.forEach(p=>{const b=document.createElement("button");b.className="candidate";b.innerHTML='<div class="name">'+escapeHtml(displayName(p))+'</div><div class="addr">'+escapeHtml(p.display_name||"")+'</div>';b.onclick=()=>selectPlace(p);c.appendChild(b)});
+  document.getElementById("candidateCard").classList.remove("hidden");
+ }catch(e){setStatus("検索中にエラーが発生しました。\n"+e.message,true)}
+}
+async function selectPlace(p){
+ document.getElementById("candidateCard").classList.add("hidden");document.getElementById("resultCard").classList.add("hidden");setStatus("道路距離を計算しています…");
+ try{
+  const lat=Number(p.lat),lon=Number(p.lon);
+  const url=`https://router.project-osrm.org/route/v1/driving/${START.lon},${START.lat};${lon},${lat}?overview=false`;
+  const r=await fetch(url);if(!r.ok)throw new Error("ルート計算サービスへの接続に失敗しました。");
+  const d=await r.json();if(d.code!=="Ok"||!d.routes?.length)throw new Error("道路ルートが見つかりませんでした。");
+  const km=d.routes[0].distance/1000,fee=Math.max(100,Math.ceil(km/10)*100);
+  document.getElementById("selectedName").textContent=displayName(p);document.getElementById("distance").textContent=km.toFixed(1)+" km";document.getElementById("fee").textContent="料金："+fee.toLocaleString()+" 円";
+  document.getElementById("mapsLink").href="https://www.google.com/maps/dir/?api=1&origin="+encodeURIComponent(START_NAME)+"&destination="+encodeURIComponent(lat+","+lon)+"&travelmode=driving";
+  clearStatus();document.getElementById("resultCard").classList.remove("hidden");
+ }catch(e){setStatus("距離計算中にエラーが発生しました。\n"+e.message,true)}
+}
+document.getElementById("query").addEventListener("keydown",e=>{if(e.key==="Enter")searchPlaces()});
+</script>
+</body>
+</html>
